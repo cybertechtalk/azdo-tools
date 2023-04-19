@@ -1,0 +1,55 @@
+
+trigger: none
+
+parameters:
+- name: username
+  displayName: Employee Name
+  type: string
+  default: Name Surname
+
+- name: team
+  displayName: Team
+  type: string
+  values:
+  - Day
+  - Night
+  - Swing
+
+- name: role
+  displayName: Developer Role
+  type: string
+  values:
+  - core
+  - Backend
+
+- name: country
+  displayName: Country
+  type: string
+  values:
+  - PL
+  - DK
+  
+
+variables:
+- group: company-project-AzDO-Credentials
+
+
+jobs:
+- job: OnboardingWorkitems
+  displayName: Onboarding workflow job
+  pool: company-dotNET
+  
+  steps:
+  - task: PythonScript@0
+    inputs:
+      scriptSource: filePath
+      scriptPath: '$(Build.SourcesDirectory)/Tools/OnboardingTool/run.py'
+      arguments: >
+        --employee "${{ parameters.username }}"
+        --team ${{ parameters.team }}
+        --role ${{ parameters.role }}
+        --country ${{ parameters.country }}
+    displayName: generate workitems
+    env:
+      AZDO_PAT_B64: $(AZDO_PAT_TOKEN_B64)
+      PYTHONIOENCODING: utf-8

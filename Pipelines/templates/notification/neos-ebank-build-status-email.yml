@@ -1,0 +1,125 @@
+parameters:
+- name: From
+  type: string
+- name: To
+  type: string
+- name: Stage
+  type: string
+- name: Status
+  type: string
+  values:
+  - 'succeeded'
+  - 'failed'
+- name: BuildId
+  type: string
+- name: B64Token
+  type: string
+
+steps:
+- powershell: |
+    Add-Type @"
+        using System.Net;
+        using System.Security.Cryptography.X509Certificates;
+        public class TrustAllCertsPolicy : ICertificatePolicy {
+            public bool CheckValidationResult(
+                ServicePoint srvPoint, X509Certificate certificate,
+                WebRequest request, int certificateProblem) {
+                return true;
+            }
+        }
+    "@
+    [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13;
+    
+    $auth = @{
+        "Authorization" = "Basic ${{ parameters.B64Token }}"
+        "Content-Type"  = "application/json"
+    }
+
+    $url = "https://dev.azure.com/company-prod/projecting/_apis/build/builds/$(Build.BuildId)?api-version=5.1"
+    $pipeline = Invoke-RestMethod -Uri $url -Headers $auth -Method Get
+    $content = [System.IO.File]::ReadAllText("./Pipelines/templates/notification/main.html")
+
+    ###############################
+    # Getting General Information #
+    ###############################
+    If ('${{ parameters.Status }}' -eq 'succeeded') {
+      $content = $content.Replace('${Status}', '
+        <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-success-20.png" width="20" height="20" class="img-block"></td>
+        <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #00b14b; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$pipeline.buildNumber+' ${{ parameters.Status }}</td>
+      ')
+    }
+    If ('${{ parameters.Status }}' -eq 'partiallySucceeded') {
+      $content = $content.Replace('${Status}', '
+        <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-warning-20.png" width="20" height="20" class="img-block"></td>
+        <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #F8A800; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$pipeline.buildNumber+' ${{ parameters.Status }}</td>
+      ')
+    }
+    If ('${{ parameters.Status }}' -eq 'canceled') {
+      $content = $content.Replace('${Status}', '
+        <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-stopped-20.png" width="20" height="20" class="img-block"></td>
+        <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #ff4743; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$pipeline.buildNumber+' ${{ parameters.Status }}</td>
+      ')
+    }
+    If ('${{ parameters.Status }}' -eq 'failed') {
+      $content = $content.Replace('${Status}', '
+        <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-failure-20.png" width="20" height="20" class="img-block"></td>
+        <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #ff4743; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$pipeline.buildNumber+' ${{ parameters.Status }}</td>
+      ')
+    }
+
+    $content = $content.Replace('${Title}', "[Deploy ${{ parameters.Status }}] " + $pipeline.definition.name + " - ${{ parameters.Stage }}")
+    $content = $content.Replace('${Project}', 'project Api')
+    $content = $content.Replace('${BuildPipeline}', $pipeline.definition.name)
+    $content = $content.Replace('${BuildNumber}', $pipeline.buildNumber)
+    $content = $content.Replace('${BuildId}', '${{ parameters.BuildId }}')
+    $content = $content.Replace('${Link}', $pipeline._links.web.href)
+    $content = $content.Replace('${Stage}', '${{ parameters.Stage }}')
+    $content = $content.Replace('${RequestedFor}', $pipeline.requestedBy.displayName)
+    $content = $content.Replace('${Reason}', $pipeline.reason)
+    $content = $content.Replace('${StartTime}', $pipeline.startTime)
+
+    $span = New-TimeSpan -Start $pipeline.startTime -End (Get-Date)
+    $ran = '{0:00}:{1:00}:{2:00}' -f $span.Hours,$span.Minutes,$span.Seconds
+    $content = $content.Replace('${Ran}', $ran)
+
+    #####################
+    # Getting WorkItems #
+    #####################
+    $workItems = Invoke-RestMethod -Uri 'https://dev.azure.com/company-prod/projecting/_apis/build/builds/$(Build.BuildId)/workitems?api-version=6.0' -Headers $auth -Method Get
+    $sb = [System.Text.StringBuilder]::new()
+    If ($workItems.count -gt 0)  {
+      foreach ($wi in $workItems.value) {
+        $item = Invoke-RestMethod -Uri ('https://dev.azure.com/company-prod/projecting/_apis/wit/workitems/'+$wi.id+'?api-version=6.0') -Headers $auth -Method Get | Select-Object -Property id,_links  -ExpandProperty fields | Select-Object -Property id, System.Title, System.WorkItemType, System.State -ExpandProperty _links
+        $workItemContent = [System.IO.File]::ReadAllText("./Pipelines/templates/notification/workitem.html")
+        $workItemContent = $workItemContent.Replace('${Ref}', $item.html.href)
+        $workItemContent = $workItemContent.Replace('${WorkItemType}', $item.'System.WorkItemType')
+        $workItemContent = $workItemContent.Replace('${id}', $item.id)
+        $workItemContent = $workItemContent.Replace('${Title}', $item.'System.Title')
+        $workItemContent = $workItemContent.Replace('${State}', $item.'System.State')
+        [void]$sb.Append($workItemContent)
+      }
+    }
+    $content = $content.Replace('${WorkItems} ', $sb.ToString())
+
+    ###################
+    # Getting Commits #
+    ###################
+    $commits = Invoke-RestMethod -Uri 'https://dev.azure.com/company-prod/projecting/_apis/build/builds/$(Build.BuildId)/changes?api-version=6.0' -Headers $auth -Method Get
+    $sb = [System.Text.StringBuilder]::new()
+    If ($commits.count -gt 0)  {
+      foreach ($commit in $commits.value) {
+        $commitContent = [System.IO.File]::ReadAllText("./Pipelines/templates/notification/commit.html")
+        $commitContent = $commitContent.Replace('${Ref}', $commit.displayUri)
+        $commitContent = $commitContent.Replace('${id}', $commit.id.substring(0, 7))
+        $commitContent = $commitContent.Replace('${Message}', $commit.message)
+        $commitContent = $commitContent.Replace('${Author}', $commit.author.uniqueName)
+        [void]$sb.Append($commitContent)
+      }
+    }
+    $content = $content.Replace('${Commits} ', $sb.ToString())
+
+    Write-Host $content `n
+    Write-Host Sending email to ${{ parameters.To }} ... `n
+    Send-MailMessage -From '${{ parameters.From }}' -To ${{ parameters.To }} -Subject ("[Deploy ${{ parameters.Status }}] " + $pipeline.definition.name + " - " + $pipeline.buildNumber + ": ${{ parameters.BuildId }}: ${{ parameters.Stage }}") -Body $content -BodyAsHtml -Priority High -SmtpServer 'securemail.company.dk'
+  displayName: Send ${{ parameters.Status }} notification

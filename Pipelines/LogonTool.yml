@@ -1,0 +1,111 @@
+
+trigger: none
+
+schedules:
+- cron: "5,35 * * * *"
+  always: true
+  displayName: At minute 5 and 35 minutes
+  branches:
+    include:
+    - develop
+
+
+variables:
+- group: company-project Logontool
+- name: PipelineUri
+  value: https://dev.azure.com/company-prod/projecting/_build?definitionId=$(System.DefinitionId)
+
+
+
+jobs:
+- job: LogonTool
+  displayName: Logon Tool
+  pool:
+    name: company-dotNET
+    demands:
+    - COMPUTERNAME -equals h0000p000tsa002
+
+  steps:
+  - task: DownloadSecureFile@1
+    name: pfxSecureFile
+    inputs:
+      secureFile: jwt.loadrunner.company.dk.pfx
+      retryCount: 5  
+    displayName: download pfx
+
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      script: | 
+        Copy-Item -Path '$(pfxSecureFile.secureFilePath)' -Destination '$(System.DefaultWorkingDirectory)\K6\internal' -Force -Verbose
+      errorActionPreference: 'stop'
+    displayName: copy pfx file into internal dir
+  
+  - task: PowerShell@2
+    inputs:
+      targetType: 'filePath'
+      filePath: $(System.DefaultWorkingDirectory)\K6\start.ps1
+      workingDirectory: $(System.DefaultWorkingDirectory)\K6
+      arguments: >
+        -vus 1
+        -iter 1
+        -logontool
+    displayName: running logontool
+    env:
+      user: $(logontoolUser)
+      pass: $(logontoolPass)
+    
+- job: Notify
+  displayName: Notify if 'Logon Tool' failed
+  dependsOn: LogonTool
+  condition: and(always(), failed())
+  pool:
+    name: company-dotNETJN
+  
+  steps:
+  - checkout: none
+  - task: SendEmail@1
+    displayName: Send notification
+    inputs:
+      To: $(TeamsChannel)
+      From: 'pipelines@company.dk'
+      Subject: 'Logon Tool pipeline failed'
+      Body: '
+        <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml">
+        <head>
+          <title>Logon Tool pipeline failed</title>
+        </head>
+        <body>
+          <br>
+          <strong>Pipeline URI: </strong><a href="$(PipelineUri)">$(PipelineUri)</a>
+        </body>
+        </html>
+      '
+      BodyAsHtml: true
+      SmtpServer: 'securemail.company.dk'
+      SmtpPort: 
+      UseSSL: false
+
+  - task: SendEmail@1
+    displayName: Send notification to Peter Lind
+    inputs:
+      To: 'plha@company.dk'
+      From: 'pipelines@company.dk'
+      Subject: 'company Logon Tool pipeline failed'
+      Body: '
+        <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml">
+        <head>
+          <title>Logon Tool pipeline failed</title>
+        </head>
+        <body>
+          <br>
+          <strong>Pipeline URI: </strong><a href="$(PipelineUri)">$(PipelineUri)</a>
+        </body>
+        </html>
+      '
+      BodyAsHtml: true
+      SmtpServer: 'securemail.company.dk'
+      SmtpPort: 
+      UseSSL: false

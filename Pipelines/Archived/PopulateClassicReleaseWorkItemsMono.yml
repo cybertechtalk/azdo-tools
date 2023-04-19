@@ -1,0 +1,45 @@
+
+
+trigger: none
+
+# schedules:
+# - cron: "30 4 * * 1-6" #UTC time
+#   displayName: "MON-SAT at 6:30 (CET time)"
+#   branches:
+#     include:
+#     - develop
+#   always: true
+# - cron: "30 11 * * 1-6" #UTC time
+#   displayName: "MON-SAT at 13:30 (CET time)"
+#   branches:
+#     include:
+#     - develop
+#   always: true
+
+
+variables:
+- group: company-project-AzDO-Credentials
+- name: azdoUrl
+  value: dev.azure.com/company-prod/projecting
+- name: ReleasePipelineId
+  value: 63
+- name: WikiSubPageTitle
+  value: RM company projecting Mono
+
+
+jobs:
+- job: WikiBuilder
+  displayName: Classic Release Workitems Changelog
+  pool:
+    name: company-dotNET
+    demands:
+      - COMPUTERNAME -equals h0000p000tsa002
+  
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: filePath
+      filePath: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\PopulateClassicReleaseWorkItems.ps1'
+    displayName: Populate Wiki Pages
+    env:
+      AZDO_PAT_B64: $(AZDO_PAT_TOKEN_B64)

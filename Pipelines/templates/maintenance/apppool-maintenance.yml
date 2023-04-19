@@ -1,0 +1,74 @@
+parameters:
+- name: AppPoolName
+  type: string
+- name: AppPoolAction
+  values:
+  - start
+  - stop
+  - recycle
+  default: start
+- name: AppPoolStartMode
+  values:
+  - OnDemand
+  - AlwaysRunning
+  default: AlwaysRunning
+- name: Preload
+  type: boolean
+  values:
+  - true
+  - false
+  default: true
+- name: WebSiteAction
+  displayName: WebSite Action
+  values:
+  - start
+  - stop
+  - recycle
+  default: start
+
+steps:
+- powershell: |
+    $SystemDirectory = [Environment]::SystemDirectory
+    cd $SystemDirectory/inetsrv
+
+    Write-Host "##[debug] Managing Site ${{ parameters.AppPoolName }}" 
+    Write-Host "WebSiteAction: ${{ parameters.WebSiteAction }}"
+    Write-Host "Preload: ${{ parameters.Preload }}"
+    If ('${{ parameters.WebSiteAction }}' -eq 'recycle') {
+      .\appcmd.exe stop site /site.name:${{ parameters.AppPoolName }}
+      .\appcmd.exe start site /site.name:${{ parameters.AppPoolName }}
+    }
+    Else {
+      .\appcmd.exe ${{ parameters.WebSiteAction }} site /site.name:${{ parameters.AppPoolName }}
+    }
+    .\appcmd.exe set app "${{ parameters.AppPoolName }}/" /preloadEnabled:${{ parameters.Preload }}
+    Write-Host "`n"
+
+    Write-Host "##[debug] Managing AppPool ${{ parameters.AppPoolName }}"
+    Write-Host "AppPoolAction: ${{ parameters.AppPoolAction }}"
+    Write-Host "AppPoolStartMode: ${{ parameters.AppPoolStartMode }}"
+    .\appcmd ${{ parameters.AppPoolAction }} apppool /apppool.name:${{ parameters.AppPoolName }}
+    If ("${{parameters.AppPoolStartMode}}" -Eq "AlwaysRunning") {
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} -startMode:AlwaysRunning
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} -autoStart:true
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} /processModel.idleTimeout:00:00:00
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} /processModel.startupTimeLimit:00:10:00
+    }
+    Else {
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} -startMode:OnDemand
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} -autoStart:false
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} /processModel.idleTimeout:00:02:00
+      .\appcmd.exe set apppool /apppool.name:${{ parameters.AppPoolName }} /processModel.startupTimeLimit:00:20:00
+    }
+
+    Import-Module WebAdministration
+    Get-ItemProperty IIS:AppPools/${{ parameters.AppPoolName }} | Select *
+    Get-ItemProperty IIS:AppPools/${{ parameters.AppPoolName }} | Select-Object autoStart, startMode -ExpandProperty processModel | select autoStart, startMode, startupTimeLimit, idleTimeout
+    Get-ItemProperty IIS:Sites/${{ parameters.AppPoolName }} | Select-Object -ExpandProperty applicationDefaults
+  displayName: 'Manage AppPool and Site'
+  errorActionPreference: 'silentlyContinue'
+
+- powershell: |
+    $subject = "${{ parameters.AppPoolName }} - ${{parameters.AppPoolAction}} - ${{parameters.AppPoolStartMode}}"
+    Write-Host "##vso[build.updatebuildnumber]$subject"
+  displayName: Update build number 

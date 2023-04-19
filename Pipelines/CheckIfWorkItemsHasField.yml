@@ -1,0 +1,85 @@
+name: "$(Date:yyMMdd).$(Rev:rr)"
+
+parameters:
+- name: fields
+  type: object
+  default:
+  - company.Acc_1_Changed
+
+variables:
+- group: company-project Proxy Configuration
+- group: company-project Project Configuration
+- group: PHX-SHARED-AZURE-KV-VG
+
+trigger: 
+- none
+
+pool: company-dotNETJN
+
+jobs:
+- job: CheckIfWorkItemsHasFields
+  displayName: Check If WorkItems has fields
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      script: |
+        Add-Type @"
+            using System.Net;
+            using System.Security.Cryptography.X509Certificates;
+            public class TrustAllCertsPolicy : ICertificatePolicy {
+                public bool CheckValidationResult(
+                    ServicePoint srvPoint, X509Certificate certificate,
+                    WebRequest request, int certificateProblem) {
+                    return true;
+                }
+            }
+        "@
+        [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13;
+        
+        . .\Tools\AzdoRestApi\pr\work-items-list.ps1
+        $WorkItems = Get-WorkItemsList -AzureDevOpsPAT '$(PHX-SHARED-B64-TOKEN)' -OrganizationName '$(organizationName)' -teamProjectName '$(teamProjectName)' -repositoryName '$(repositoryName)' -pullRequestId '$(System.PullRequest.PullRequestId)'
+        Write-Host $WorkItems
+        $ids = ($WorkItems.Content | ConvertFrom-Json).value.id
+        Write-Host "##vso[task.setvariable variable=WorkItemIds;]$ids"
+    displayName: Getting WorkItems 
+
+  - ${{ each field in parameters.fields }}:
+    - task: PowerShell@2
+      inputs:
+        targetType: 'inline'
+        script: |
+          Add-Type @"
+              using System.Net;
+              using System.Security.Cryptography.X509Certificates;
+              public class TrustAllCertsPolicy : ICertificatePolicy {
+                  public bool CheckValidationResult(
+                      ServicePoint srvPoint, X509Certificate certificate,
+                      WebRequest request, int certificateProblem) {
+                      return true;
+                  }
+              }
+          "@
+          [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13;
+        
+          $header = @{
+              "Authorization" = "Basic $(PHX-SHARED-B64-TOKEN)"
+              "Content-Type"  = "application/json"
+          }
+          $sb = [System.Text.StringBuilder]::new()
+          foreach ($id in $Env:WorkItemIds.Split()) {
+              $url = 'https://dev.azure.com/$(organizationName)/$(teamProjectName)/_apis/wit/workitems/' + $id + '?api-version=6.0'
+              $res = Invoke-RestMethod -Method GET -Headers $header -Uri $url
+              if ([string]::IsNullOrEmpty($res.fields."${{ field }}")) {
+                  [void]$sb.AppendLine("##[error] WorkItemId ${id}: '${{ field }}' is nullorempty")
+              }
+          }
+
+          if (-not [string]::IsNullOrEmpty($sb.ToString())) {
+              Write-Host $sb
+              exit 1
+          }
+      displayName: Check If WorkItems has ${{ field }}
+        

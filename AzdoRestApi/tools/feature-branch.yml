@@ -1,0 +1,234 @@
+name: "$(Build.BuildNumber) (Release $(rev:r))"
+
+trigger: none
+
+resources:
+  pipelines:
+  - pipeline: build
+    source: company-CI-Feature
+    project: projecting
+
+parameters:
+- name: skipNotifications
+  displayName: Skip Notifications
+  type: boolean
+  values:
+  - true
+  - false
+  default: true
+
+variables:
+- group: core-FEATURE-BRANCH-KV-VG
+- name: BaseUrl
+  value: https://cm-$(EncodedBranchName).companycompany.ibn.host/
+- name: TestUrl
+  value: https://stormdk-$(EncodedBranchName).companycompany.ibn.host/
+- name: BuildDiffName
+  value: company-CI-Feature
+- name: BuildNumber
+  value: CI
+- name: EMailRecipients
+  value: morten.andersen@isobar.com;soren.tarding@isobar.com
+- name: EMailSender
+  value: noreply@companyonline.dk
+- name: SmtpServer
+  value: smtp.office365.com
+- name: UITestIntegrationtestUrl
+  value: https://automatedtestdk-deploy-dev.test.company.dk
+- name: UITestUsername
+  value: core\IntegrationTest
+- name: UITestUsernameOnUi
+  value: IntegrationTest
+- name: UnicornSyncPath
+  value: unicorn.aspx
+- name: FtpUploadServerUrl
+  value: ftps://13.95.141.94
+- name: FtpUploadUserName
+  value: branchadmin
+- name: ComputerName
+  value: https://companybranchtest.companycompany.ibn.host:5986
+- name: Username
+  value: companybranchtest\branchadmin
+
+stages:
+- stage: CI
+  jobs:
+  - job: Deploy
+    pool: company-Azure-Deploy
+    steps:
+    - task: ExtractFiles@1
+      displayName: 'Extract deployment files'
+      inputs:
+        archiveFilePatterns: '$(System.DefaultWorkingDirectory)\build\$(BuildDiffName)\deployment\deployment.zip'
+        destinationFolder: '$(System.DefaultWorkingDirectory)\deployment'
+
+    - powershell: |
+        $scriptRoot = "$(System.DefaultWorkingDirectory)"
+        
+        $encodedBranchName = Get-Content -Path "$scriptRoot\deployment\build-output\calculatedBranchName.txt"
+        
+        if ([string]::IsNullOrWhiteSpace($encodedBranchName))
+        {
+          throw "Could not get encoded branch name from deployment artifact"
+        }
+        
+        Write-Host "Encoded branch name: '$encodedBranchName'"
+        Write-Host ("##vso[task.setvariable variable=EncodedBranchName;]$encodedBranchName")
+      displayName: 'Read hashed branch name from deployment artifact'
+
+    - powershell: |
+        Write-Host "Encoded branch name: '$(EncodedBranchName)'"
+      displayName: 'Output hashed branch name'
+
+    - task: FtpUpload@1
+      displayName: 'FTP Upload deployment'
+      inputs:
+        credentialsOption: inputs
+        serverUrl: '$(FtpUploadServerUrl)'
+        username: $(FtpUploadUserName)
+        password: '$(FtpUploadPassword)'
+        rootDirectory: '$(System.DefaultWorkingDirectory)\deployment'
+        filePatterns: '**/*'
+        remoteDirectory: '/$(EncodedBranchName)/deployment'
+        clean: true
+        preservePaths: true
+        trustSSL: true
+
+    - task: FtpUpload@2
+      displayName: 'FTP Upload release'
+      inputs:
+        credentialsOption: inputs
+        serverUrl: '$(FtpUploadServerUrl)'
+        username: $(FtpUploadUserName)
+        password: '$(FtpUploadPassword)'
+        rootDirectory: '$(System.DefaultWorkingDirectory)\build\$(BuildDiffName)\publish'
+        filePatterns: '**/*'
+        remoteDirectory: '/$(EncodedBranchName)/publish'
+        clean: true
+        preservePaths: true
+        trustSSL: true
+
+    - powershell: |
+        $computerName = "$(ComputerName)"
+        $Username = "$(Username)"
+        $Password = ConvertTo-SecureString "$(FtpUploadPassword)" -AsPlainText -Force
+        
+        $so = New-PSSessionOption -SkipCACheck
+        $cred = New-Object System.Management.Automation.PSCredential($Username,$password)
+        Invoke-Command -ConnectionUri $computerName -SessionOption $so -Credential $cred -ScriptBlock {Invoke-Expression -Command:"powershell.exe /c 'F:\_Data\Upload\$(EncodedBranchName)\deployment\remote-build.ps1' -branchName $(EncodedBranchName) -deploymentFolder $(EncodedBranchName) -thumbprint '$(Thumbprint)'" }
+        
+        ignoreLASTEXITCODE: true
+      displayName: 'Install branch on target machine'
+      timeoutInMinutes: 60
+
+    - powershell: |
+        $computerName = "$(ComputerName)"
+        $Username = "$(Username)"
+        $Password = ConvertTo-SecureString "$(FtpUploadPassword)" -AsPlainText -Force
+        
+        $so = New-PSSessionOption -SkipCACheck
+        $cred = New-Object System.Management.Automation.PSCredential($Username,$password)
+        Invoke-Command -ConnectionUri $computerName -SessionOption $so -Credential $cred -ScriptBlock {Invoke-Expression -Command:"powershell.exe /c 'F:\_Data\Upload\$(EncodedBranchName)\deployment\Unicorn\Sync.ps1' -url '$(BaseUrl)$(UnicornSyncPath)' -secret '$(UnicornSharedSecret)'" }
+      displayName: 'Run Unicorn'
+      continueOnError: true
+
+    - powershell: |
+        $computerName = "$(ComputerName)"
+        $Username = "$(Username)"
+        $Password = ConvertTo-SecureString "$(FtpUploadPassword)" -AsPlainText -Force
+        
+        $so = New-PSSessionOption -SkipCACheck
+        $cred = New-Object System.Management.Automation.PSCredential($Username,$password)
+        Invoke-Command -ConnectionUri $computerName -SessionOption $so -Credential $cred -ScriptBlock {Invoke-Expression -Command:"powershell.exe /c 'F:\_Data\Upload\$(EncodedBranchName)\deployment\Indexing\RebuildIndexes.ps1' -BindingPostFix - -BaseUrl $(BaseUrl)" }
+      displayName: 'Rebuild indexes'
+      continueOnError: true
+
+    - ${{ if ne(parameters.skipNotifications, true) }}:
+      - task: rvo.SendEmailTask.send-email-build-task.SendEmail@1
+        displayName: 'Send an email detailing the release'
+        inputs:
+          To: '$(EMailRecipients)'
+          From: '$(EMailSender)'
+          Subject: 'company company: "$(Build.SourceBranch)" released'
+          Body: |
+            <p>
+                <b>The source branch is '$(Build.SourceBranch)'</b><br/>
+                <b>The encoded branch name is '$(EncodedBranchName)'</b><br/>
+                <b>*** Content Management ***</b><br/>
+                <b>https://stormdk-editor-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+                <b>https://stormfo-editor-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+                <b>https://stormno-editor-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+                <b>https://stormse-editor-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+                <b>*** Content Delivery ***</b><br/>
+                <b>https://stormdk-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+                <b>https://stormfo-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+                <b>https://stormno-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+                <b>https://stormse-$(EncodedBranchName).companycompany.ibn.host/</b><br/>
+            </p>
+            <p>
+            Check your inbox for a previous e-mail, stating the additional URLs for this installation.
+            </p>
+          BodyAsHtml: true
+          SmtpServer: $(SmtpServer)
+          SmtpUsername: '$(EMailSender)'
+          SmtpPassword: $(SmtpPassword)
+        continueOnError: true
+      - task: rvo.SendEmailTask.send-email-build-task.SendEmail@1
+        displayName: 'Send an email if release failed'
+        inputs:
+          To: '$(EMailRecipients)'
+          From: '$(EMailSender)'
+          Subject: 'company company: "$(Build.SourceBranch)" release failed'
+          Body: |
+            <p>
+                <h1 style="color:red"><b>FAILED: Release of $(Release.ReleaseName)</b></h1>
+            </p>
+            <p>
+                <b>Build Definition</b>: $(Build.DefinitionName) <br>
+                <b>Build Number</b>  : $(Build.BuildNumber)    <br> 
+                <b>Source Branch</b> : $(Build.SourceBranch)  <br>  
+            </p>
+            <p>
+                It can <u>not</u> be tested
+            </p>
+          BodyAsHtml: true
+          SmtpServer: $(SmtpServer)
+          SmtpUsername: '$(EMailSender)'
+          SmtpPassword: $(SmtpPassword)
+        condition: failed()
+    - ${{ else }}:
+      - powershell: |
+          Write-Host ""
+          Write-Host "The source branch is '$(Build.SourceBranch)'"
+          Write-Host "The encoded branch name is '$(EncodedBranchName)'"
+          Write-Host ""
+          Write-Host "*** Content Management ***"
+          Write-Host "https://stormdk-editor-$(EncodedBranchName).companycompany.ibn.host/"
+          Write-Host "https://stormfo-editor-$(EncodedBranchName).companycompany.ibn.host/"
+          Write-Host "https://stormno-editor-$(EncodedBranchName).companycompany.ibn.host/"
+          Write-Host "https://stormse-editor-$(EncodedBranchName).companycompany.ibn.host/"
+          Write-Host ""
+          Write-Host "*** Content Delivery ***"
+          Write-Host "https://stormdk-$(EncodedBranchName).companycompany.ibn.host/"
+          Write-Host "https://stormfo-$(EncodedBranchName).companycompany.ibn.host/"
+          Write-Host "https://stormno-$(EncodedBranchName).companycompany.ibn.host/"
+          Write-Host "https://stormse-$(EncodedBranchName).companycompany.ibn.host/"
+        displayName: 'Information log'
+        continueOnError: true
+      - powershell: |
+          Write-Host "##[error]FAILED: Release of $(Release.ReleaseName)"
+          Write-Host "Build Definition: $(Build.DefinitionName)"
+          Write-Host "Build Number: $(Build.BuildNumber)"
+          Write-Host "Source Branch: $(Build.SourceBranch)"
+          Write-Host "##[error]It can not be tested"
+        displayName: 'Error log'
+        condition: failed()
+
+
+
+
+
+
+
+    
+

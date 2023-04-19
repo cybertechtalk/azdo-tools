@@ -1,0 +1,73 @@
+name: "$(Date:yyMMdd).$(Rev:rr)"
+
+trigger: 
+- none
+
+pool: company-Azure-Deploy
+
+parameters:
+- name: cdStatus
+  displayName: CD status
+  type: string
+  values:
+  - online
+  - offline
+  default: online
+- name: cmStatus
+  displayName: CM status
+  type: string
+  values:
+  - online
+  - offline
+  default: online
+- name: subscription
+  displayName: Subscription
+  type: string
+  values:
+  - company000000-TESTDMZ
+  - company000000-DMZ
+  default: company000000-TESTDMZ
+
+jobs:
+- job: UseKudu
+  variables:
+    fileName: application.status
+  steps:
+  - task: AzurePowerShell@5
+    inputs:
+      ${{ if eq(parameters.subscription, 'company000000-TESTDMZ') }}:
+        azureSubscription: 'app_company_Test_Webapp_Kudu_DevOps'
+      ${{ if eq(parameters.subscription, 'company000000-DMZ') }}:
+        azureSubscription: 'app_company_DMZ_Webapp_Kudu_DevOps'
+      ScriptType: 'InlineScript'
+      Inline: |
+        netsh winhttp reset proxy
+        nslookup.exe $(APIURL)
+
+        $userAgent = "powershell/1.0"
+        $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("{0}:{1}" -f "`$(USERNAME)", "$(USERPWD)")))
+        $auth = @{
+            "Authorization" = "Basic $base64AuthInfo"
+            "If-Match" = "*"
+        }
+        Write-Host "Listing $(APIURL)/api/vfs/site/wwwroot/`n"
+        $list = Invoke-RestMethod -Uri "$(APIURL)/api/vfs/site/wwwroot/" -Headers $auth -UserAgent $userAgent -Method GET
+        $list | ForEach-Object {$_.path}
+
+        if ($list | Where-Object {$_.path -match '$(fileName)'}) {
+          Write-Host "`n##[debug]$(fileName):"
+          Invoke-RestMethod -Uri $(APIURL)/api/vfs/site/wwwroot/$(fileName) -Headers $auth -UserAgent $userAgent -Method GET
+
+          Add-Content "$(System.DefaultWorkingDirectory)/$(fileName)" "cd:${{ parameters.cdStatus }}`ncm:${{ parameters.cmStatus }}"
+
+          Write-Host "Updating $(fileName) ..."
+          Invoke-RestMethod -Uri $(APIURL)/api/vfs/site/wwwroot/$(fileName) -Headers $auth -UserAgent $userAgent -Method PUT -InFile $(System.DefaultWorkingDirectory)/$(fileName) -ContentType "multipart/form-data"
+
+          Write-Host "##[section]$(fileName) updated:"
+          Invoke-RestMethod -Uri $(APIURL)/api/vfs/site/wwwroot/$(fileName) -Headers $auth -UserAgent $userAgent -Method GET
+        }
+        else {
+          Write-Host "##[error] No $(fileName) file found in $(APIURL)/api/vfs/site/wwwroot/"
+        }
+      azurePowerShellVersion: 'LatestVersion'
+    displayName: Updating $(fileName) in ${{ parameters.subscription }}

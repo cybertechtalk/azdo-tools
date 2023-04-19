@@ -1,0 +1,94 @@
+parameters:
+- name: SourceRepo
+  type: string
+- name: SourceBranch
+  type: string
+- name: TargetBranch
+  type: string
+- name: AccessToken
+  type: string
+- name: ReviewerList
+  type: object
+- name: ExcludePath
+  type: string
+  default: ''
+- name: TeamProject
+  type: string
+- name: CreatePullRequest
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+
+steps:
+- checkout: company-project-DevOps
+- powershell: |
+    Import-Module $(Build.SourcesDirectory)\company-project-DevOps\Scripts\MergeDown\VstsRestApiFunctionsLibrary.psm1
+    Import-Module $(Build.SourcesDirectory)\company-project-DevOps\Scripts\MergeDown\VstsGitFunctionsLibrary.psm1
+
+    $env:GIT_REDIRECT_STDERR = '2>&1'
+
+    function DiffAndMerge {
+      $from = $args[0]
+      $to = $args[1]
+      $sourceRepo = '$(Build.SourcesDirectory)\${{ parameters.SourceRepo }}'
+
+      Write-Host "From $from`n 
+        To $to`n 
+        SourceRepo $sourceRepo`n 
+        TeamProject ${{ parameters.TeamProject }}`n
+        AGENT_NAME $env:AGENT_NAME`n 
+        ReviewerList ${{ parameters.ReviewerList }}`n
+        ExcludePath ${{ parameters.ExcludePath }}`n
+        CreatePullRequest ${{ parameters.CreatePullRequest }}"
+
+      Write-Output "[INFO] Entering sources directory $sourceRepo";
+      cd $sourceRepo
+
+      Write-Output "[INFO] Setting integrated git credentials";
+      Invoke-Git "config credential.interactive never";
+      Invoke-Git "config credential.helper manager";
+      Invoke-Git "config credential.vsts-prod.visualstudio.com.authority integrated";
+      Invoke-Git "config user.email `"tfs_prod@company.dk`""
+      Invoke-Git "config user.name `"$env:AGENT_NAME`""
+      Invoke-Git "config --list --show-origin";
+
+      Write-Output "[INFO] Checking out branch $to ignoring all unmerged entries";
+      Invoke-Git "branch -D $to";
+      Invoke-Git "checkout -f $to";
+
+      Write-Output "[INFO] Pulling newest changes, if any";
+      Invoke-Git "pull origin $to";
+
+      Write-Output "[INFO] Merging branch $from into $to";
+      Invoke-Git "merge origin/$from --no-commit";
+      Invoke-Git "reset -- ${{ parameters.ExcludePath }}";
+      $Merge = Invoke-Git "commit -m `"Automatic merge down $from into $to`"";
+
+      Write-Output $Merge;
+      
+      If ('${{ parameters.CreatePullRequest }}' -Eq 'false') {
+        If (($Merge -Match "Merge made by the") -Or ($Merge -Match "Fast-forward")) {
+          Write-Output "[INFO] Merge successful. Pushing changes to $to";
+          Invoke-Git "push --porcelain origin $to ";
+        } ElseIf ($Merge -Match "Automatic merge failed") {
+          Write-Warning "Conflict detected on merge from $from into $to";
+          $Repository = @{ "repo" = "${{ parameters.SourceRepo }}"; "reviewers" = ${{ parameters.ReviewerList }}; "project" = "${{ parameters.TeamProject }}" };
+          $PullRequestId = CreatePullRequest -AuthToken ${{ parameters.AccessToken }} -Repository $Repository -From $from -To $to -Title "[CONFLICT] Merging changes down from $from into $to" -Description "# This is an automatic PR created due to conflicts on branches";
+        } Else {
+          Write-Output "[INFO] No changes detected between $from and $to";
+        }
+      } Else {
+        If (($Merge -Match "Merge made by the") -Or ($Merge -Match "Fast-forward") -Or ($Merge -Match "Automatic merge failed")) {
+          $Repository = @{ "repo" = "${{ parameters.SourceRepo }}"; "reviewers" = ${{ parameters.ReviewerList }}; "project" = "${{ parameters.TeamProject }}" };
+          $PullRequestId = CreatePullRequest -AuthToken ${{ parameters.AccessToken }} -Repository $Repository -From $from -To $to -Title "[PR] Merging changes down from $from into $to" -Description "# This is an automatic PR created due to unmerged changes";
+        } Else {
+          Write-Output "[INFO] No changes detected between $from and $to";
+        }
+      }
+      Write-Host "##vso[task.setvariable variable=PullRequestId]$PullRequestId"
+    }
+
+    DiffAndMerge ${{ parameters.SourceBranch }} ${{ parameters.TargetBranch }};
+  displayName: Merge ${{ parameters.SourceBranch }} -> ${{ parameters.TargetBranch }}

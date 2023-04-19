@@ -1,0 +1,120 @@
+trigger: none
+
+schedules:
+- cron: "*/30 * * * *"
+  always: true
+  displayName: Every 30 minutes
+  branches:
+    include:
+    - develop
+
+variables:
+- group: company-project-DevOps
+- name: TeamsChannel
+  value: d4f8f5fc.companyonline.dk@emea.teams.ms
+- name: PipelineUri
+  value: https://dev.azure.com/company-prod/projecting/_build?definitionId=$(System.DefinitionId)
+
+jobs:
+  - job: LogonTool
+    displayName: Logon Tool
+    pool:
+      name: company-dotNET
+      demands: 
+      - COMPUTERNAME -equals h0000p000tsa002
+
+    steps:
+    - task: PowerShell@2
+      displayName: Import Cert
+      inputs:
+        targetType: 'inline'
+        script: |
+          $username = "user"
+          $password = ConvertTo-SecureString '$(Logon_Tool_Cert_Password)' -AsPlainText -Force
+          $psCred = New-Object System.Management.Automation.PSCredential -ArgumentList ($username, $password)
+          Import-PfxCertificate -FilePath "$(Build.SourcesDirectory)\Scripts\Logon_Tool\jwt.loadrunner.company.dk.pfx" -CertStoreLocation Cert:\CurrentUser\My -Password $psCred.Password
+
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)\Scripts\Logon_Tool\'
+        Contents: '**'
+        TargetFolder: 'C:\company\'
+        OverWrite: true
+
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)\Scripts\Common\'
+        Contents: '**'
+        TargetFolder: 'C:\company\'
+        OverWrite: true
+
+    - task: PowerShell@2
+      displayName: SOAPUI
+      inputs:
+        targetType: 'inline'
+        script: |
+          Set-Location "C:\Program Files\SmartBear\SoapUI-5.6.0\bin\"
+          .\testrunner.bat -s "Logon company" -c "A Login Sekvens WEB" -r 'C:\company\Logon MonitoringII.xml' -t""ProxySettings@enableProxy=True"" -t""ProxySettings@host=http://companypx-forti.intern.company.dk:8080"" -t""ProxySettings@port=8080"" -f $(System.DefaultWorkingDirectory) -M -j -runasadministrator
+        errorActionPreference: 'silentlyContinue'
+
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/TEST-*.xml'
+        failTaskOnFailedTests: true
+        testRunTitle: 'Logon Results'
+
+
+  - job: Notify
+    displayName: Notify if 'Logon Tool' failed
+    dependsOn: LogonTool
+    condition: and(always(), failed())
+    pool:
+      name: company-dotNETJN
+    
+    steps:
+    - task: SendEmail@1
+      displayName: Send notification
+      inputs:
+        To: $(TeamsChannel)
+        From: 'pipelines@company.dk'
+        Subject: 'Logon Tool pipeline failed'
+        Body: '
+          <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+          <html xmlns="http://www.w3.org/1999/xhtml">
+          <head>
+            <title>Logon Tool pipeline failed</title>
+          </head>
+          <body>
+            <br>
+            <strong>Pipeline URI: </strong><a href="$(PipelineUri)">$(PipelineUri)</a>
+          </body>
+          </html>
+        '
+        BodyAsHtml: true
+        SmtpServer: 'securemail.company.dk'
+        SmtpPort: 
+        UseSSL: false
+
+    - task: SendEmail@1
+      displayName: Send notification to Peter Lind
+      inputs:
+        To: 'plha@company.dk'
+        From: 'pipelines@company.dk'
+        Subject: 'company Logon Tool pipeline failed'
+        Body: '
+          <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+          <html xmlns="http://www.w3.org/1999/xhtml">
+          <head>
+            <title>Logon Tool pipeline failed</title>
+          </head>
+          <body>
+            <br>
+            <strong>Pipeline URI: </strong><a href="$(PipelineUri)">$(PipelineUri)</a>
+          </body>
+          </html>
+        '
+        BodyAsHtml: true
+        SmtpServer: 'securemail.company.dk'
+        SmtpPort: 
+        UseSSL: false

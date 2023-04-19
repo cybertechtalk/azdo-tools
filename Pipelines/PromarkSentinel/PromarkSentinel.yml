@@ -1,0 +1,75 @@
+name: "$(Date:yyMMdd).$(Rev:rr)"
+
+trigger: 
+- none
+
+schedules:
+- cron: "*/60 * * * *"
+  displayName: "Every 60 minutes"
+  branches:
+    include:
+    - develop
+  always: true
+
+parameters:
+- name: AreaPath
+  displayName: Azure DevOps Area Path
+  type: object
+  default:
+    - projecting\company\project
+    - projecting\company\project\Day Shift
+    - projecting\company\project\Night Shift 
+    - projecting\company\project\Swing Shift
+    - projecting\company\project\Technical
+    - projecting\company_DevOps
+- name: IdleTime
+  displayName: Time after work item start to be audited, in minutes
+  type: number
+  default: 15
+- name: Interval
+  displayName: Time interval to run next sentinel check, in minutes
+  type: number
+  default: 60
+
+variables:
+- group: company-project Proxy Configuration
+- group: company-project Project Configuration
+- group: PHX-SHARED-AZURE-KV-VG
+
+pool: company-dotNETJN
+
+jobs:
+- job: PromarkSentinelJob
+  displayName: Check If PBI/Bug has parent
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: 'filePath'
+      filePath: $(System.DefaultWorkingDirectory)\Pipelines\PromarkSentinel\NotifyIfRelationNotExists.ps1
+      arguments: >
+        -AzureDevOpsPAT $(PHX-SHARED-B64-TOKEN)
+        -OrganizationName $(organizationName)
+        -ProjectName $(teamProjectName)
+        -AreaPath "${{ join(',',parameters.AreaPath) }}"
+        -IdleTime ${{ parameters.IdleTime }}
+        -Interval ${{ parameters.Interval }}
+    displayName: Notify if relation does not exist
+    name: NotifyIfRelationNotExists
+
+- job: PromarkSentinelJob_BugTemplates
+  displayName: Check If Bug used template
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: 'filePath'
+      filePath: $(System.DefaultWorkingDirectory)\Pipelines\PromarkSentinel\NotifyIfBugTemplateNotUsed.ps1
+      arguments: >
+        -AzureDevOpsPAT $(PHX-SHARED-B64-TOKEN)
+        -OrganizationName $(organizationName)
+        -ProjectName $(teamProjectName)
+        -AreaPath "${{ join(',',parameters.AreaPath) }}"
+        -IdleTime ${{ parameters.IdleTime }}
+        -Interval ${{ parameters.Interval }}
+    displayName: Notify if template isn't used
+    name: NotifyIfBugTemplateNotUsed
+        

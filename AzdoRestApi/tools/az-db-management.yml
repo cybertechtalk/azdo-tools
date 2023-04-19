@@ -1,0 +1,62 @@
+name: "Run-$(Date:yyyyMMdd).$(rev:r)"
+
+trigger: none
+
+parameters:
+- name: preprod
+  type: boolean
+  values:
+  - true
+  - false
+  default: true
+- name: pilot
+  type: boolean
+  values:
+  - true
+  - false
+  default: true
+- name: prod
+  type: boolean
+  values:
+  - true
+  - false
+  default: true
+- name: MatchPattern
+  type: string
+  default: DELETED-BY-SCRIPT*
+- name: CleanDbPool
+  displayName: Remove 'MatchPattern' dbs from elastic pool
+  type: boolean
+  values:
+  - true
+  - false
+  default: true
+
+stages:
+- template: company-core-db-management-stage.yml
+  parameters:
+    Stage: preprod
+    SqlUserpasswordName: $(company-project-preprod-sqlserver)
+    CleanDbPool: ${{ parameters.CleanDbPool }}
+    MatchPattern: ${{ parameters.MatchPattern }}
+    Condition: ${{ eq(parameters.preprod, true) }}
+- template: company-core-db-management-stage.yml
+  parameters:
+    Stage: pilot
+    SqlUserpasswordName: $(company-project-pilot-sqlserver)
+    CleanDbPool: ${{ parameters.CleanDbPool }}
+    MatchPattern: ${{ parameters.MatchPattern }}
+    Condition: ${{ eq(parameters.pilot, true) }}
+    DependsOn: ['preprod']
+- template: company-core-db-management-stage.yml
+  parameters:
+    Stage: prod
+    SqlUserpasswordName: $(company-project-prod-sqlserver)
+    CleanDbPool: ${{ parameters.CleanDbPool }}
+    MatchPattern: ${{ parameters.MatchPattern }}
+    Condition: ${{ eq(parameters.prod, true) }}
+    DependsOn: ['pilot']
+
+
+
+

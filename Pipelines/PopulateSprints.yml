@@ -1,0 +1,45 @@
+
+
+trigger: none
+
+schedules:
+- cron: "15 5 * * 1-5" #UTC time
+  displayName: "MON-FRI at 6:15 (CET time)"
+  branches:
+    include:
+    - develop
+  always: true
+- cron: "15 11 * * 1-5" #UTC time
+  displayName: "MON-FRI at 12:15 (CET time)"
+  branches:
+    include:
+    - develop
+  always: true
+- cron: "15 14 * * 1-5" #UTC time
+  displayName: "MON-FRI at 15:15 (CET time)"
+  branches:
+    include:
+    - develop
+  always: true
+
+
+variables:
+- group: company-project-AzDO-Credentials
+
+
+jobs:
+- job: WikiBuilder
+  displayName: API Changelog Wiki Builder
+  pool:
+    name: company-dotNET
+    demands:
+      - COMPUTERNAME -equals h0000p000tsa002
+  
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: filePath
+      filePath: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\PopulateWikiPages.ps1'
+    displayName: Populate Wiki Pages
+    env:
+      AZDO_PAT_B64: $(AZDO_PAT_TOKEN_B64)

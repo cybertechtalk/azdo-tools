@@ -1,0 +1,21 @@
+$destinationContainer = 'memorydumps'
+$destinationAccount = 'companyprojectproddiagnostic'
+$destinationKey = '<destinationKey>'
+
+$sourceContainer = 'memorydumps'
+$sourceAccount = 'companyebagm9yzo'
+$sourceKey = '<sourceKey>'
+
+# To copy blob from source container to destination container
+az storage blob copy start-batch `
+  --destination-container $destinationContainer `
+  --account-name $destinationAccount `
+  --account-key $destinationKey `
+  --source-account-name $sourceAccount `
+  --source-account-key $sourceKey `
+  --source-container $sourceContainer
+
+# To view status of operation
+az storage blob list --container-name $destinationContainer `
+  --account-name $destinationAccount `
+  --account-key $destinationKey -o table

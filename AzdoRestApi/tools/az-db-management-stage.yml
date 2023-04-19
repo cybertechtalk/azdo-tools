@@ -1,0 +1,136 @@
+parameters:
+- name: Stage
+  type: string
+  values:
+  - preprod
+  - pilot
+  - prod
+  - eikaprod
+  default: preprod
+- name: SqlUserpasswordName
+  type: string
+- name: CleanDbPool
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: MatchPattern
+  type: string
+  default: DELETED-BY-SCRIPT*
+- name: Condition
+  type: boolean
+  default: true
+- name: DependsOn
+  type: object
+  default: []
+
+stages:
+- stage: ${{ parameters.Stage }}
+  displayName: company-project-${{ parameters.Stage }}-sqlserver/${{ parameters.MatchPattern }}
+  dependsOn: ${{ parameters.DependsOn }}
+  condition: ${{ parameters.Condition }}
+  jobs:
+  - job: Job
+    displayName: Running on ${{ parameters.Stage }}
+    timeoutInMinutes: 720
+    pool: 
+      name: company-dotNET
+      demands: 
+      - Agent.ComputerName -equals h0000p000tsa002
+    variables:
+    - group: core-${{ parameters.Stage }}-PIPELINE-VG
+    - group: core-company-project-${{ parameters.Stage }}-SQLSERVER-KV
+    steps:
+    - checkout: none
+    - powershell: |
+        Write-Host "##vso[task.setvariable variable=SqlUserpasswordKV]${{ parameters.SqlUserpasswordName }}"
+      displayName: Assigning KV secrets
+
+    - task: AzurePowerShell@5
+      displayName: 'Exporting BACPACs to $(StorageAccountName)/$(StorageContainerName)'
+      inputs:
+        azureSubscription: 'Prod SPA'
+        ScriptType: InlineScript
+        Inline: |
+          ####################################################################
+          # Getting list of dbs starts with '${{ parameters.MatchPattern }}' #
+          ####################################################################
+          $pattern = '${{ parameters.MatchPattern }}'
+          Write-Host "Getting list of $pattern ..."
+          $list = Get-AzSqlDatabase -ResourceGroupName "$(ResourceGroup)" -ServerName "$(ServerName)" | Where-Object {$_.DatabaseName | Select-String -Pattern "$pattern" } | Select-Object -Property DatabaseName 
+          foreach ($db in $list) {
+            Write-Host $db.DatabaseName
+          }
+
+          foreach ($db in $list) 
+          {
+            $dbName = $db.DatabaseName
+            Write-Host "##[debug] ----- Processing $dbName ----"
+
+            ########################
+            # Check if blob exists #
+            ########################
+            $ctx = New-AzStorageContext -StorageAccountName $(StorageAccountName) -StorageAccountKey $(company-project-storage-account-key)
+            $blob = Get-AzStorageBlob -Blob "$dbName.bacpac" -Container $(StorageContainerName) -Context $ctx -ErrorAction Ignore
+            if (-not $blob)
+            {
+              ########################
+              # AzSqlDatabaseExport  #
+              ########################
+              Write-Host "AzSqlDatabaseExport $dbName to $(StorageAccountName)/$(StorageContainerName) ..."
+              $exportRequest= New-AzSqlDatabaseExport -ResourceGroupName "$(ResourceGroup)"  `
+                  -ServerName "$(ServerName)" `
+                  -DatabaseName "$dbName" `
+                  -StorageKeyType "StorageAccessKey" `
+                  -StorageKey "$(company-project-storage-account-key)" `
+                  -StorageUri "https://$(StorageAccountName).blob.core.windows.net/$(StorageContainerName)/$dbName.bacpac"  `
+                  -AdministratorLogin "$(SqlUsername)" `
+                  -AdministratorLoginPassword ('$(SqlUserpasswordKV)' | ConvertTo-SecureString -AsPlainText -Force) -Verbose
+
+              $exportStatus = Get-AzSqlDatabaseImportExportStatus -OperationStatusLink $exportRequest.OperationStatusLink
+              $exportStatus | Format-Table
+              while ($exportStatus.Status -eq "InProgress")
+              {
+                  Write-Host $exportStatus.StatusMessage
+                  Start-Sleep -s 60
+                  $exportStatus = Get-AzSqlDatabaseImportExportStatus -OperationStatusLink $exportRequest.OperationStatusLink
+              }
+              $exportStatus | Format-Table
+
+              ######################################
+              # Moving blod to archive access tier #
+              ######################################
+              Write-Host "Moving $(StorageContainerName)/$dbName.bacpac to archive access tier ..."
+              $blob = Get-AzStorageBlob -Blob "$dbName.bacpac" -Container $(StorageContainerName) -Context $ctx -ErrorAction Ignore
+              $blob.BlobClient.SetAccessTier("Archive")
+              Write-Host "##[section] ---- $dbName exported to $(StorageContainerName)/$dbName.bacpac ------ `n`n"
+            } 
+            else 
+            {
+              Write-Host "##[debug]$dbName alredy exists in $(StorageAccountName)/$(StorageContainerName) `n`n"
+            }
+          }
+        azurePowerShellVersion: LatestVersion
+      
+    - ${{ if eq(parameters.CleanDbPool, true) }}:
+      - task: AzurePowerShell@5
+        displayName: "Removing '${{ parameters.MatchPattern }}' from $(ServerName)"
+        condition: succeeded()
+        inputs:
+          azureSubscription: 'Prod SPA'
+          ScriptType: InlineScript
+          Inline: |
+            ####################################################################
+            # Getting list of dbs starts with '${{ parameters.MatchPattern }}' #
+            ####################################################################
+            $pattern = '${{ parameters.MatchPattern }}'
+            Write-Host "Getting list of $pattern ..."
+            $list = Get-AzSqlDatabase -ResourceGroupName "$(ResourceGroup)" -ServerName "$(ServerName)" | Where-Object {$_.DatabaseName | Select-String -Pattern "$pattern"} | Select-Object -Property DatabaseName 
+            foreach ($db in $list) {
+              $dbName = $db.DatabaseName
+              Write-Host "##[debug] Removing $dbName ..."
+              Remove-AzSqlDatabase -ResourceGroupName "$(ResourceGroup)" -ServerName "$(ServerName)" -DatabaseName "$dbName" -Force
+              Write-Host "##[section] $dbName was removed `n`n"
+            }
+          azurePowerShellVersion: LatestVersion

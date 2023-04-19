@@ -1,0 +1,239 @@
+name: "IIS Maintenance-$(Date:yyMMdd).$(Rev:rr)"
+
+trigger: none
+
+pool:
+  name: company-dotNET
+
+parameters:
+- name: Environment
+  values:
+  - T
+  - P
+  default: P
+- name: EnvironmentTag
+  displayName: Environment Tag
+  type: string
+  default: PHX-P
+- name: Leg
+  displayName: Leg
+  values:
+  - 1
+  - 2
+  default: 1
+
+- name: StartApi
+  displayName: StartApi (AppPoolStart + OnDemand + Preload=True + WebsiteStart)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: StopApi
+  displayName: Stop API (AppPoolStop + OnDemand + Preload=True + WebsiteStart)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: StartASB
+  displayName: Start ASB (AppPoolStart + AlwaysRunning + Preload=True + WebsiteStart)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: StopASB
+  displayName: Stop ASB (AppPoolStop + OnDemand + Preload=False + WebsiteStop)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: RecycleApi
+  displayName: Recycle API (AppPoolRecycle + OnDemand + Preload=True + WebsiteStart)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: RecycleAsb
+  displayName: Recycle ASB (AppPoolRecycle + AlwaysRunning + Preload=True + WebsiteStart)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: StartHF
+  displayName: Start HF (AppPoolStart + AlwaysRunning + Preload=True + WebsiteStart)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+- name: StopHF
+  displayName: Stop HF (AppPoolStop + OnDemand + Preload=False + WebsiteStop)
+  type: boolean
+  values:
+  - true
+  - false
+  default: false
+
+
+
+variables:
+- group: company-project Project Configuration
+
+stages:
+- stage: StartApi
+  condition: ${{ parameters.StartApi }}
+  jobs:
+  - job: StartApi
+    steps:
+    - task: PowerShell@2
+      displayName: Start API (AppPoolStart + OnDemand + Preload=True + WebsiteStart)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "Mono": "True", "Leg": "${{ parameters.Leg }}" }'
+        showWarnings: true
+
+- stage: StopApi
+  condition: ${{ parameters.StopApi }}
+  jobs:
+  - job: StopApi
+    steps:
+    - task: PowerShell@2
+      displayName: Stop API (AppPoolStop + OnDemand + Preload=True + WebsiteStart)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "Mono": "True", "Leg": "${{ parameters.Leg }}", "AppPoolAction": "stop" }'
+        showWarnings: true
+
+- stage: StartASB
+  condition: ${{ parameters.StartASB }}
+  jobs:
+  - job: StartASB
+    steps:
+    - task: PowerShell@2
+      displayName: Start ASB (AppPoolStart + AlwaysRunning + Preload=True + WebsiteStart)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "ServiceBus": "True", "Leg": "${{ parameters.Leg }}", "AppPoolStartMode": "AlwaysRunning" }'
+        showWarnings: true
+
+- stage: StopASB
+  condition: ${{ parameters.StopASB }}
+  jobs:
+  - job: StopASB
+    steps:
+    - task: PowerShell@2
+      displayName: Stop ASB (AppPoolStop + OnDemand  + Preload=False + WebsiteStop)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "ServiceBus": "True", "Leg": "${{ parameters.Leg }}", "AppPoolAction": "stop", "AppPoolStartMode": "OnDemand", "Preload": "False", "WebSiteAction": "stop" }'
+        showWarnings: true
+
+- stage: RecycleApi
+  condition: ${{ parameters.RecycleApi }}
+  jobs:
+  - job: RecycleApi
+    steps:
+    - task: PowerShell@2
+      displayName: Recycle API (AppPoolRecycle , Website No-Op)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "Mono": "True", "Leg": "${{ parameters.Leg }}", "AppPoolAction": "recycle" }'
+        showWarnings: true
+
+- stage: RecycleAsb
+  condition: ${{ parameters.RecycleAsb }}
+  jobs:
+  - job: RecycleAsb
+    steps:
+    - task: PowerShell@2
+      displayName: Recycle ASB (AppPoolRecycle , Website No-Op)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "ServiceBus": "True", "Leg": "${{ parameters.Leg }}", "AppPoolAction": "recycle", "AppPoolStartMode": "AlwaysRunning" }'
+        showWarnings: true
+
+- stage: StartHF
+  condition: ${{ parameters.StartHF }}
+  jobs:
+  - job: StartHF
+    steps:
+    - task: PowerShell@2
+      displayName: Start HF (AppPoolStart + AlwaysRunning + Preload=True + WebsiteStart)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "Hangfire": "True", "Leg": "${{ parameters.Leg }}", "AppPoolStartMode": "AlwaysRunning" }'
+        showWarnings: true
+
+- stage: StopHF
+  condition: ${{ parameters.StopHF }}
+  jobs:
+  - job: StopHF
+    steps:
+    - task: PowerShell@2
+      displayName: Stop HF (AppPoolStop + OnDemand + Preload=False + WebsiteStop)
+      inputs:
+        targetType: filePath
+        filePath: ./Tools/AzdoRestApi/pipelines/run-pipeline.ps1
+        arguments: > 
+          -AzureDevOpsPAT "$(PHX-SHARED-B64-TOKEN)" 
+          -OrganizationName "$(organizationName)" 
+          -ProjectName "$(teamProjectName)" 
+          -PipelineId 851 
+          -BranchName "develop"
+          -TemplateParameters '{ "Environment": "${{ parameters.Environment }}", "EnvironmentTag": "${{ parameters.EnvironmentTag }}", "Hangfire": "True", "Leg": "${{ parameters.Leg }}", "AppPoolAction": "stop", "AppPoolStartMode": "OnDemand", "Preload": "False", "WebSiteAction": "stop" }'
+        showWarnings: true
+

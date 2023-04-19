@@ -1,0 +1,128 @@
+name: "IIS Maintenance-$(rev:r)"
+
+trigger: none
+
+parameters:
+- name: Environment
+  values:
+  - T
+  - P
+  default: none
+- name: EnvironmentTag
+  displayName: Agents by Environment Tag (ex. PHX-P, PHX-HANGFIRE)
+  type: string
+- name: InvestmentUniverse
+  displayName: Investment Universe
+  type: boolean
+  default: false
+- name: Mono
+  displayName: Mono
+  type: boolean
+  default: false
+- name: Hangfire
+  displayName: Hangfire
+  type: boolean
+  default: false
+- name: ServiceBus
+  displayName: ServiceBus
+  type: boolean
+  default: false
+- name: Leg
+  displayName: Leg
+  values:
+  - 1
+  - 2
+  default: none  
+- name: AppPoolAction
+  displayName: AppPool Action
+  values:
+  - start
+  - stop
+  - recycle
+  default: start
+- name: AppPoolStartMode
+  displayName: AppPool StartMode
+  values:
+  - OnDemand
+  - AlwaysRunning
+  default: OnDemand
+- name: Preload
+  type: boolean
+  values:
+  - true
+  - false
+  default: true
+- name: WebSiteAction
+  displayName: WebSite Action
+  values:
+  - start
+  - stop
+  - recycle
+  default: start
+
+jobs:
+- deployment: IISMaintenance
+  displayName: AppPools Maintenance
+  timeoutInMinutes: 0
+  cancelTimeoutInMinutes: 1
+  environment:
+    name: projecting-PHX-${{ parameters.Environment }}
+    resourceType: VirtualMachine
+    tags: ${{ parameters.EnvironmentTag }}
+  variables: 
+    Leg: ${{ parameters.Leg }}
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+        - task: PowerShell@2
+          displayName: Set Variables 
+          inputs:
+            targetType: 'inline'
+            script: |
+              $appPoolI = "projecting-investment-universe-${{parameters.Environment}}-3010${{parameters.Leg}}"
+              $appPoolM = "projecting-mono-${{parameters.Environment}}-Api-3000${{parameters.Leg}}"
+              $appPoolH = "projecting-mono-${{parameters.Environment}}-Hangfire-3999${{parameters.Leg}}"
+              $appPoolS = "projecting-mono-${{parameters.Environment}}-ServiceBus-3100${{parameters.Leg}}"                  
+              Write-Host "##vso[task.setvariable variable=appPoolI]$appPoolI"
+              Write-Host "##vso[task.setvariable variable=appPoolM]$appPoolM"
+              Write-Host "##vso[task.setvariable variable=appPoolH]$appPoolH"
+              Write-Host "##vso[task.setvariable variable=appPoolS]$appPoolS"
+
+        - ${{ if eq(parameters.InvestmentUniverse, true) }}:
+          - template: /Pipelines/templates/maintenance/apppool-maintenance.yml
+            parameters:
+              AppPoolName: $(appPoolI)
+              AppPoolAction: ${{parameters.AppPoolAction}}
+              AppPoolStartMode: ${{parameters.AppPoolStartMode}}
+              Preload: ${{parameters.Preload}}
+              WebSiteAction: ${{parameters.WebSiteAction}}
+
+        - ${{ if eq(parameters.Mono, true) }}:
+          - template: /Pipelines/templates/maintenance/apppool-maintenance.yml
+            parameters:
+              AppPoolName: $(appPoolM)
+              AppPoolAction: ${{parameters.AppPoolAction}}
+              AppPoolStartMode: ${{parameters.AppPoolStartMode}}
+              Preload: ${{parameters.Preload}}
+              WebSiteAction: ${{parameters.WebSiteAction}}
+
+        - ${{ if eq(parameters.Hangfire, true) }}:
+          - template: /Pipelines/templates/maintenance/apppool-maintenance.yml
+            parameters:
+              AppPoolName: $(appPoolH)
+              AppPoolAction: ${{parameters.AppPoolAction}}
+              AppPoolStartMode: ${{parameters.AppPoolStartMode}}
+              Preload: ${{parameters.Preload}}
+              WebSiteAction: ${{parameters.WebSiteAction}}
+
+        - ${{ if eq(parameters.ServiceBus, true) }}:
+          - template: /Pipelines/templates/maintenance/apppool-maintenance.yml
+            parameters:
+              AppPoolName: $(appPoolS)
+              AppPoolAction: ${{parameters.AppPoolAction}}
+              AppPoolStartMode: ${{parameters.AppPoolStartMode}}
+              Preload: ${{parameters.Preload}}
+              WebSiteAction: ${{parameters.WebSiteAction}}
+
+          

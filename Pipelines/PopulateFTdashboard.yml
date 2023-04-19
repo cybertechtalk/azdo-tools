@@ -1,0 +1,40 @@
+
+
+trigger: none
+
+schedules:
+- cron: "10 6-18/2 * * 1-5" #UTC time
+  displayName: "MON-FRI from 07:10-19:10 every 2 hours (CET time)"
+  branches:
+    include:
+    - develop
+  always: true
+
+
+variables:
+- group: company-project-AzDO-Credentials
+- name: FTpipelineID
+  value: 518
+- name: companyRepoId
+  value: ae0ae003-b3fb-44a6-8f3c-9e4fe49116b7
+- name: azdoURI
+  value: dev.azure.com/company-prod/projecting
+
+
+
+jobs:
+- job: WikiBuilder
+  displayName: FT Deployments Wiki Builder
+  pool:
+    name: company-dotNET
+    demands:
+      - COMPUTERNAME -equals h0000p000tsa002
+  
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: filePath
+      filePath: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\PopulateFTdashboard.ps1'
+    displayName: Populate Wiki Pages
+    env:
+      AZDO_PAT_B64: $(AZDO_PAT_TOKEN_B64)

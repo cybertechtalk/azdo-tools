@@ -1,0 +1,38 @@
+
+trigger: none
+
+schedules:
+- cron: "0 2 * * *" # UTC time
+  displayName: "runs at 03:00 every day (CET time)"
+  branches:
+    include:
+    - develop
+  always: true
+
+
+variables:
+  - name: appName
+    value: company-Consent
+  - name: rg
+    value: RG-company000000-PROD-ASE-002
+
+
+jobs:
+- job: WebAppRestarter
+  displayName: company-Consent web app restarter
+  pool:
+    name: company-dotNET
+    demands: 
+    - COMPUTERNAME -equals h0000p000tsa002
+
+  steps:
+  - checkout: none
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: 'company-Consent-Restarter(c79d4573-dcde-40dc-9ab7-f7fa277e0c36)'
+      scriptType: ps
+      scriptLocation: inlineScript
+      inlineScript: |
+        # az --version
+        az webapp restart --name $env:appName --resource-group $env:rg --verbose
+    displayName: trigger web app restart

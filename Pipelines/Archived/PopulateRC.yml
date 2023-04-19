@@ -1,0 +1,41 @@
+
+trigger: none
+
+
+# schedules:
+# - cron: "0 5-17/4 * * 1-5" #UTC time
+#   displayName: "MON-FRI from 06:00-18:00 every 4 hours (CET time)"
+#   branches:
+#     include:
+#     - develop
+#   always: true
+
+
+variables:
+- group: company-project-AzDO-Credentials
+- name: branchName
+  value: master
+- name: azdoUrl
+  value: dev.azure.com/company-prod/projecting
+- name: companyRepoId
+  value: ae0ae003-b3fb-44a6-8f3c-9e4fe49116b7
+- name: projectingMonoPipelineId
+  value: 533
+
+
+jobs:
+- job: PopulateRC
+  displayName: Release Candidates Builder
+  pool:
+    name: company-dotNET
+  
+  steps:
+  - checkout: self
+  - task: PowerShell@2
+    inputs:
+      targetType: filePath
+      filePath: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\PopulateRC.ps1'
+    displayName: Populate RC Wiki Pages
+    env:
+      AZDO_PAT_B64: $(AZDO_PAT_TOKEN_B64)
+      functionsDir: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\helper'

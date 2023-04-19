@@ -1,0 +1,34 @@
+name: "$(Date:yyMMdd).$(Rev:rr)"
+
+trigger: none
+
+schedules:
+- cron: "*/5 * * * *"
+  displayName: "Runs every 5 mins"
+  branches:
+    include:
+    - master
+  always: true
+
+pool: company-dotNETJN
+
+jobs:
+- job: BackendAvailabilityCheck
+  displayName: Backend Availability Check
+  variables:
+  - name: ProjectUrl
+    value: http://$(Url)/definitions/group/$(Group)/definition/$(Definition)/services
+  steps:
+    - task: PowerShell@2
+      displayName: Checking $(ProjectUrl)
+      inputs:
+        targetType: filePath
+        filePath: './Tools/company-backend-availability-check.ps1'
+        arguments: >
+          -Url "$(ProjectUrl)"
+          -RecipientEmail "$(NotificationChannel)"
+          -SenderEmail "$(Agent.MachineName)@company.dk"
+          -SmtpServer "$(SmtpServer)"
+          -Leg "$(Leg)"
+
+

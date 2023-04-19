@@ -1,0 +1,45 @@
+
+
+trigger: none
+
+# schedules:
+# - cron: "10 4 * * 1-6" #UTC time
+#   displayName: "MON-SAT at 6:10 (CET time)"
+#   branches:
+#     include:
+#     - develop
+#   always: true
+# - cron: "10 11 * * 1-6" #UTC time
+#   displayName: "MON-SAT at 13:10 (CET time)"
+#   branches:
+#     include:
+#     - develop
+#   always: true
+
+
+variables:
+- group: company-project-AzDO-Credentials
+- name: azdoUrl
+  value: dev.azure.com/company-prod/projecting
+- name: ReleasePipelineId
+  value: 533
+- name: WikiSubPageTitle
+  value: RM company projecting Mono YML
+
+
+jobs:
+- job: WikiBuilder
+  displayName: YML Release Workitems Changelog
+  pool:
+    name: company-dotNET
+    demands:
+      - COMPUTERNAME -equals h0000p000tsa002
+  
+  steps:
+  - task: PowerShell@2
+    inputs:
+      targetType: filePath
+      filePath: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\PopulateYamlReleaseWorkItems.ps1'
+    displayName: Populate Wiki Pages
+    env:
+      AZDO_PAT_B64: $(AZDO_PAT_TOKEN_B64)

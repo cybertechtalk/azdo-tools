@@ -1,0 +1,64 @@
+name: "Populate Workitems - $(rev:r)"
+
+trigger: none
+
+parameters:
+- name: fromDate
+  displayName: "From Date (valid format: 2022-09-14)"
+  type: string
+
+- name: toDate
+  displayName: "To Date (valid format: 2022-10-18)"
+  type: string
+
+- name: releaseBranch
+  displayName: "Release branch name (valid format: release/october-2022)"
+  type: string
+
+- name: pageName
+  displayName: "wiki page name where dashboard will be deployed (valid format: October 2022)"
+  type: string
+
+- name: func
+  displayName: Azure Function
+  type: string
+  default: companyadofunctions
+  values:
+    - companyadofunctions
+
+
+
+variables:
+- group: company-project-AzDO-Credentials
+- group: company-project Azure Function Configuration
+- name: branchName
+  value: master
+- name: azdoUrl
+  value: dev.azure.com/company-prod/projecting
+
+
+jobs:
+- job: PopulateWorkitems
+  displayName: Populate Workitems on Wiki page
+  pool:
+    name: company-dotNET
+
+  steps:
+  - checkout: self
+  - task: PythonScript@0
+    inputs:
+      scriptSource: filePath
+      scriptPath: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\PopulateWorkitemsAzFunc.py'
+      arguments: >
+        --from-date ${{ parameters.fromDate }}
+        --to-date ${{ parameters.toDate }}
+        --release-branch ${{ parameters.releaseBranch }}
+        --page-name "${{ parameters.pageName }}"
+        --az-func "${{ parameters.func }}"
+    displayName: Publish on Wiki
+    env:
+      AZDO_PAT_B64: $(AZDO_PAT_TOKEN_B64)
+      FUNC_CODE: $(AzFuncCode)
+      FUNC_CODE_LX: $(AzFuncCodeLx)
+      functionsDir: '$(Build.SourcesDirectory)\Scripts\WikiBuilder\helper'
+      PYTHONIOENCODING: utf-8

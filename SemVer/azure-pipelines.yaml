@@ -1,0 +1,57 @@
+name: $(GITVERSION_FullSemVer)
+
+pool: "company-dotNET"
+
+parameters:
+- name: PackageName
+  displayName: Package Name (Project.*)
+  type: string
+  default: OperationContext
+- name: buildConfiguration
+  displayName: Build Configuration
+  type: string
+  values:
+  - 'Release'
+  - 'Debug'
+  default: 'Release'
+- name: DotNetVersion
+  displayName: .Net Version
+  type: string
+  default: 6.0.x
+- name: VersionMode
+  displayName: Version Mode
+  type: string
+  values:
+  - 'GitVersion'
+  - 'File'
+  default: 'GitVersion'
+- name: TargetFiles
+  type: object
+  default:
+  - Project.OperationContext
+  - Project.OperationContext.Abstractions
+  - Project.OperationContext.Core
+
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    include: 
+    - 'OperationContext/*'
+
+variables:
+- group: company-project Project Configuration
+- name: buildConfiguration 
+  value: ${{ parameters.BuildConfiguration }}
+
+steps:
+- template: ../template.yaml
+  parameters:
+    PackageName: ${{ parameters.PackageName }}
+    BuildConfiguration: ${{ parameters.BuildConfiguration }}
+    DotNetVersion: ${{ parameters.DotNetVersion }}
+    TargetFiles: ${{ parameters.TargetFiles }}
+    VersionMode: ${{ parameters.VersionMode }}
+    
+  

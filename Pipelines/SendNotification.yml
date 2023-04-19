@@ -1,0 +1,174 @@
+trigger: none
+
+parameters:
+- name: EmailTo
+  type: string
+- name: TextTo
+  type: string
+- name: Stage
+  type: string
+- name: BuildId
+  type: string
+- name: RunId
+  type: string
+- name: PreviousRunId
+  type: string
+  default: null
+
+variables:
+- group: company-project Proxy Configuration
+- group: company-project Project Configuration
+- group: company-project Azure Function Configuration
+
+jobs:
+- job: SendNotification
+  displayName: SendNotification
+  pool: company-dotNETJN
+  
+  steps:
+  - powershell: |
+      Add-Type @"
+          using System.Net;
+          using System.Security.Cryptography.X509Certificates;
+          public class TrustAllCertsPolicy : ICertificatePolicy {
+              public bool CheckValidationResult(
+                  ServicePoint srvPoint, X509Certificate certificate,
+                  WebRequest request, int certificateProblem) {
+                  return true;
+              }
+          }
+      "@
+      [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+      [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13;
+      
+      $auth = @{
+          "Authorization" = "Basic $(PHX-SHARED-B64-TOKEN)"
+          "Content-Type"  = "application/json"
+      }
+
+      Write-Host "##[debug] Waiting for buildId=${{ parameters.BuildId }} is finished for 30 sec" 
+      Start-Sleep -Seconds 30
+
+      $url = "https://dev.azure.com/$(organizationName)/$(teamProjectName)/_apis/build/builds/${{ parameters.BuildId }}?api-version=5.1"
+      $pipeline = Invoke-RestMethod -Uri $url -Headers $auth -Method Get
+      $content = [System.IO.File]::ReadAllText("./Pipelines/templates/notification/main.html")
+      $title = "$($pipeline.buildNumber) $($pipeline.result)"
+    
+      ###############################
+      # Getting General Information #
+      ###############################
+      If ($pipeline.result -eq 'succeeded') {
+        $content = $content.Replace('${Status}', '
+          <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-success-20.png" width="20" height="20" class="img-block"></td>
+          <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #00b14b; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$title+'</td>
+        ')
+      }
+      If ($pipeline.result -eq 'partiallySucceeded') {
+        $content = $content.Replace('${Status}', '
+          <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-warning-20.png" width="20" height="20" class="img-block"></td>
+          <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #F8A800; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$title+'</td>
+        ')
+      }
+      If ($pipeline.result -eq 'canceled') {
+        $content = $content.Replace('${Status}', '
+          <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-stopped-20.png" width="20" height="20" class="img-block"></td>
+          <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #ff4743; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$title+'</td>
+        ')
+      }
+      If ($pipeline.result -eq 'failed') {
+        $content = $content.Replace('${Status}', '
+          <td style="padding-right: 7px;" valign="top"><img src="https://cdn.vsassets.io/content/notifications/icon-failure-20.png" width="20" height="20" class="img-block"></td>
+          <td valign="middle" style="font-size: 13px; font-weight: 400; line-height:20px; color: #ff4743; font-family: Segoe UI, Helvetica, Arial, sans-serif; padding-top: 0px; vertical-align: middle; text-transform:uppercase">'+$title+'</td>
+        ')
+      }
+
+      If ('${{ parameters.PreviousRunId }}' -eq 'null') {
+        $previousRunId = ''
+      }
+      Else { 
+        $previousRunId = '&previousRunId=${{ parameters.PreviousRunId }}' 
+      }
+
+      $content = $content.Replace('${Title}', "${{ parameters.Stage }} $title")
+      $content = $content.Replace('${Project}', '$(repositoryName)')
+      $content = $content.Replace('${BuildPipeline}', $pipeline.definition.name)
+      $content = $content.Replace('${BuildId}', '${{ parameters.RunId }}')
+      $content = $content.Replace('${Link}', $pipeline._links.web.href)
+      $content = $content.Replace('${Stage}', '${{ parameters.Stage }}')
+      $content = $content.Replace('${RequestedFor}', $pipeline.requestedBy.displayName)
+      $content = $content.Replace('${Reason}', $pipeline.reason)
+      $content = $content.Replace('${StartTime}', ([DateTime]$pipeline.startTime).ToString("dd.MM.yyyy HH:mm:ss"))
+
+      $span = New-TimeSpan
+      If ($pipeline.finishTime -ne $null) { 
+        $span = New-TimeSpan -Start $pipeline.startTime -End $pipeline.finishTime
+      }
+      $ran = '{0:00}:{1:00}:{2:00}' -f $span.Hours,$span.Minutes,$span.Seconds
+      $content = $content.Replace('${Ran}', $ran)
+
+      #####################
+      # Getting WorkItems #
+      #####################
+      $workItems = Invoke-RestMethod -Uri "$(AzFuncUri)/GetWorkItemsByPipelineRunFunction?definitionId=$($pipeline.definition.id)&pipelineRunId=$($pipeline.id)&stageIdentifier=${{ parameters.Stage }}$previousRunId&code=$(AzFuncCode)&format=json"
+      $sb = [System.Text.StringBuilder]::new()
+      If ($workItems.count -gt 0)  {
+        foreach ($wi in $workItems) {
+          $item = Invoke-RestMethod -Uri ("https://dev.azure.com/$(organizationName)/$(teamProjectName)/_apis/wit/workitems/$($wi)?api-version=6.0") -Headers $auth -Method Get | Select-Object -Property id,_links  -ExpandProperty fields | Select-Object -Property id, System.Title, System.WorkItemType, System.State -ExpandProperty _links
+          $workItemContent = [System.IO.File]::ReadAllText("./Pipelines/templates/notification/workitem.html")
+          $workItemContent = $workItemContent.Replace('${Ref}', $item.html.href)
+          $workItemContent = $workItemContent.Replace('${WorkItemType}', $item.'System.WorkItemType')
+          $workItemContent = $workItemContent.Replace('${id}', $item.id)
+          $workItemContent = $workItemContent.Replace('${Title}', $item.'System.Title')
+          $workItemContent = $workItemContent.Replace('${State}', $item.'System.State')
+          [void]$sb.Append($workItemContent)
+        }
+      }
+      $content = $content.Replace('${WorkItems} ', $sb.ToString())
+
+      ###################
+      # Getting Changes #
+      ###################
+      $changes = Invoke-RestMethod -Uri "$(AzFuncUri)/GetChangesByPipelineRunFunction?definitionId=$($pipeline.definition.id)&pipelineRunId=$($pipeline.id)&stageIdentifier=${{ parameters.Stage }}$previousRunId&code=$(AzFuncCode)"
+      $sb = [System.Text.StringBuilder]::new()
+      If ($changes.count -gt 0)  {
+        foreach ($chg in $changes) {
+          $commitContent = [System.IO.File]::ReadAllText("./Pipelines/templates/notification/commit.html")
+          $commitContent = $commitContent.Replace('${Ref}', $chg.url)
+          $commitContent = $commitContent.Replace('${id}', $chg.commitIdTruncated)
+          $commitContent = $commitContent.Replace('${Message}', $chg.message)
+          $commitContent = $commitContent.Replace('${Author}', $chg.author)
+          [void]$sb.Append($commitContent)
+        }
+      }
+      $content = $content.Replace('${Commits} ', $sb.ToString())
+
+      $emailTo = '${{ parameters.EmailTo }}'.Split(',')
+      $subject = "[Deploy $($pipeline.result)] $($pipeline.definition.name) - $($pipeline.buildNumber) - ${{ parameters.Stage }}"
+
+      ### Updating run name
+      Write-Host "##vso[build.updatebuildnumber]$subject"
+
+      ###############################
+      # Set error message if failed #
+      ###############################
+      If ($pipeline.result -eq 'failed') {
+        . ./Tools/pipeline-helpers.ps1
+        $errorTemplate = [System.IO.File]::ReadAllText("./Pipelines/templates/notification/logs.html")
+        $logs = Get-PipelineRunLogs $(PHX-SHARED-B64-TOKEN) $(organizationName) $(teamProjectName) ${{ parameters.BuildId }} 'failed'
+        $content = $content.Replace('${Logs}', $errorTemplate.Replace('${Log}', $logs))
+      }
+      Else {
+        $content = $content.Replace('${Logs}', '')
+      }
+
+      Write-Host $content `n
+
+      Send-MailMessage -From "Azure DevOps <azuredevops@company.dk>" -To $emailTo -Subject $subject -Body $content -BodyAsHtml -Priority High -SmtpServer 'securemail.company.dk'
+      Write-Host "##[section] Sent email to $emailTo ... "`n
+
+      If ($pipeline.result -eq 'failed') {
+        $textTo = '${{ parameters.TextTo }}'.Split(',')
+        Send-MailMessage -From "azuredevops@company.dk" -To $textTo -SmtpServer "securemail.company.dk" -Subject "$(repositoryName)" -Body $subject
+        Write-Host "##[section] Sent text to $textTo ... "
+      }
+    displayName: Send notification

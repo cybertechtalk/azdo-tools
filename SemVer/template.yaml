@@ -1,0 +1,181 @@
+parameters:
+- name: PackageName
+  type: string
+- name: BuildConfiguration
+  type: string
+- name: DotNetVersion
+  type: string
+- name: TargetFiles
+  type: object
+- name: VersionMode
+  type: string
+  values:
+  - 'GitVersion'
+  - 'File'
+
+steps:
+- task: UseDotNet@2
+  displayName: Install .NET Core ${{ parameters.DotNetVersion }} SDK
+  inputs:
+    version: '${{ parameters.DotNetVersion }}'
+    packageType: sdk
+
+- ${{ if eq(parameters.VersionMode, 'File') }}:
+  - task: FileContenttoVariable@2
+    displayName: Read semantic version from file
+    inputs:
+      FilePath: '${{ parameters.PackageName }}/version'
+      VariableName: 'SemVersion'
+      AddNewlines: false
+  - task: PowerShell@2
+    displayName: Set variables
+    inputs:
+      targetType: 'inline'
+      script: |
+        if ("$(Build.SourceBranch)" -eq "refs/heads/master") {
+          $version = "$(SemVersion)"
+        }
+        else {
+          $sanitizedBranchName = "$(Build.SourceBranchName)" -replace '[^a-zA-Z0-9]', ''
+          $version = "$(SemVersion)-" + $sanitizedBranchName + "$(Build.BuildID)"
+        }
+
+        $targetFiles = '${{ join(',',parameters.TargetFiles) }}'.Split(',')
+        $targetNuspec = ($targetFiles -join '.nuspec,') + '.nuspec'
+        $targetProj = ($targetFiles -join '.csproj;') + '.csproj'
+
+        Write-Host "##vso[task.setvariable variable=targetNuspec;]$targetNuspec"
+        Write-Host "##vso[task.setvariable variable=targetProj;]$targetProj"
+        Write-Host "##vso[task.setvariable variable=version;]$version"
+
+- ${{ if eq(parameters.VersionMode, 'GitVersion') }}:
+  - task: gitversion/setup@0
+    displayName: '[GitVersion] Setup gitversion tool'
+    inputs:
+      versionSpec: '5.x'
+  - task: gitversion/execute@0
+    displayName: '[GitVersion] Execute gitversion tool'
+    inputs:
+      useConfigFile: true
+      configFilePath: '${{ parameters.PackageName }}/GitVersion.yml'
+  - powershell: |
+      Write-Host FullSemVer: $(GitVersion.FullSemVer)
+      Write-Host Major: $(GitVersion.Major) 
+      Write-Host Minor: $(GitVersion.Minor)
+      Write-Host Patch: $(GitVersion.Patch)
+      Write-Host PreReleaseTag: $(GitVersion.PreReleaseTag)
+      Write-Host PreReleaseTagWithDash: $(GitVersion.PreReleaseTagWithDash)
+      Write-Host PreReleaseLabel: $(GitVersion.PreReleaseLabel)
+      Write-Host PreReleaseNumber: $(GitVersion.PreReleaseNumber)
+      Write-Host WeightedPreReleaseNumber: $(GitVersion.WeightedPreReleaseNumber)
+      Write-Host BuildMetaData: $(GitVersion.BuildMetaData)
+      Write-Host BuildMetaDataPadded: $(GitVersion.BuildMetaDataPadded)
+      Write-Host FullBuildMetaData: $(GitVersion.FullBuildMetaData)
+      Write-Host MajorMinorPatch: $(GitVersion.MajorMinorPatch)
+      Write-Host SemVer: $(GitVersion.SemVer)
+      Write-Host LegacySemVer: $(GitVersion.LegacySemVer)
+      Write-Host LegacySemVerPadded: $(GitVersion.LegacySemVerPadded)
+      Write-Host AssemblySemVer: $(GitVersion.AssemblySemVer)
+      Write-Host AssemblySemFileVer: $(GitVersion.AssemblySemFileVer)
+      Write-Host InformationalVersion: $(GitVersion.InformationalVersion)
+      Write-Host BranchName: $(GitVersion.BranchName)
+      Write-Host Sha: $(GitVersion.Sha)
+      Write-Host ShortSha: $(GitVersion.ShortSha)
+      Write-Host NuGetVersionV2: $(GitVersion.NuGetVersionV2)
+      Write-Host NuGetVersion: $(GitVersion.NuGetVersion)
+      Write-Host NuGetPreReleaseTagV2: $(GitVersion.NuGetPreReleaseTagV2)
+      Write-Host NuGetPreReleaseTag: $(GitVersion.NuGetPreReleaseTag)
+      Write-Host VersionSourceSha: $(GitVersion.VersionSourceSha)
+      Write-Host CommitsSinceVersionSource: $(GitVersion.CommitsSinceVersionSource)
+      Write-Host CommitsSinceVersionSourcePadded:$(GitVersion.CommitsSinceVersionSourcePadded)
+      Write-Host CommitDate: $(GitVersion.CommitDate)
+    displayName: '[GitVersion] Semantic version info'
+  - task: PowerShell@2
+    displayName: Set variables
+    inputs:
+      targetType: 'inline'
+      script: |
+        $targetFiles = '${{ join(',',parameters.TargetFiles) }}'.Split(',')
+        $targetNuspec = ($targetFiles -join '.nuspec,') + '.nuspec'
+        $targetProj = ($targetFiles -join '.csproj;') + '.csproj'
+
+        Write-Host "##vso[task.setvariable variable=targetNuspec;]$targetNuspec"
+        Write-Host "##vso[task.setvariable variable=targetProj;]$targetProj"
+        Write-Host "##vso[task.setvariable variable=version;]$(GitVersion.FullSemVer)"
+
+- task: replacetokens@3
+  displayName: Replace version tokens
+  inputs:
+    targetFiles: '$(targetNuspec)'
+    verbosity: detailed
+    actionOnMissing: 'fail'
+    tokenPrefix: '#{'
+    tokenSuffix: '}#'
+  
+- task: DotNetCoreCLI@2
+  displayName: 'Restore projects'
+  inputs:
+    command: 'restore'
+    projects: '**/${{ parameters.PackageName }}/**/*.csproj'
+    feedsToUse: 'config'
+    nugetConfigPath: 'NuGet.config'
+    includeNuGetOrg: true
+
+- task: DotNetCoreCLI@2
+  displayName: 'Build projects'
+  inputs:
+    command: 'build'
+    projects: '**/${{ parameters.PackageName }}/**/*.csproj'
+    arguments: '--configuration ${{ parameters.BuildConfiguration }}'
+
+- task: DotNetCoreCLI@2
+  displayName: 'Run tests'
+  inputs:
+    command: test
+    projects: '**/${{ parameters.PackageName }}/**/*.Tests.csproj'
+    arguments: '--configuration ${{ parameters.BuildConfiguration }}'
+
+- task: DotNetCoreCLI@2
+  displayName: "Pack projects"
+  inputs:
+    command: 'pack'
+    arguments: '--configuration ${{ parameters.BuildConfiguration }}'
+    outputDir: '$(Build.ArtifactStagingDirectory)/Packages'
+    packagesToPack: '$(targetProj)'
+    nobuild: true
+    versioningScheme: off
+    
+- task: DotNetCoreCLI@2
+  displayName: "Push packages to feed company-project-Common"
+  inputs:
+    command: 'push'
+    packagesToPush: '$(Build.ArtifactStagingDirectory)/Packages/*.nupkg'
+    nuGetFeedType: 'internal'
+    publishVstsFeed: '<company-guid>/<feed-guid>'
+
+- ${{ each file in parameters.TargetFiles }}:
+  - powershell: |
+      Add-Type @"
+          using System.Net;
+          using System.Security.Cryptography.X509Certificates;
+          public class TrustAllCertsPolicy : ICertificatePolicy {
+              public bool CheckValidationResult(
+                  ServicePoint srvPoint, X509Certificate certificate,
+                  WebRequest request, int certificateProblem) {
+                  return true;
+              }
+          }
+      "@
+      [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+      [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13;
+      
+      $header = @{
+          "Authorization" = "Basic $(PHX-SHARED-B64-TOKEN)"
+          "Content-Type"  = "application/json"
+      }
+      $file = '${{ file }}'
+      $packageName = $file.Substring($file.LastIndexOf('/')+1, $file.Length-$file.LastIndexOf('/')-1)
+      $url = "https://pkgs.dev.azure.com/$(organizationName)/$(teamProjectName)/_apis/packaging/feeds/company-project/nuget/packages/$packageName/versions/$(version)/content?api-version=5.1-preview.1"
+      Write-Host $url
+      Invoke-RestMethod -Uri $url -Headers $header -Method GET
+    displayName: Refresh ${{ file }} cache on company-project feed
