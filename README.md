@@ -1,7 +1,7 @@
-# Introduction 
+# Description 
 The repository is used as a source repo for tooling for integration with Azure API, Azure DevOps API.
 
-# Getting Started
+# Policy
 How to use the repository:
 1.	Forks the repository
 2.	Create own Azure DevOps project. Create pipeline and points to the yaml source from repo.
