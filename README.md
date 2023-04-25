@@ -1,5 +1,5 @@
 # Description 
-The repository is used as a source repo for tooling for integration with Azure API, Azure DevOps API.
+The repository contains tooling to deal with Azure API, Azure DevOps API and related stuff.
 
 # Policy
 How to use the repository:
